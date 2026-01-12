@@ -1,0 +1,16 @@
+{
+  "name": "tweeks-sync",
+  "version": "1.0.0",
+  "description": "Export userscripts from Tweeks by NextByte Chrome extension",
+  "main": "index.js",
+  "bin": {
+    "tweeks-sync": "./index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["userscripts", "tweeks", "chrome", "extension"],
+  "license": "MIT",
+  "dependencies": {}
+}

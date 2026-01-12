@@ -12,28 +12,41 @@ Export userscripts from the [Tweeks by NextByte](https://chrome.google.com/webst
 
 ## Requirements
 
-- Python 3.10+
+- Node.js 18+
 - macOS (uses `strings` command for LevelDB parsing)
 - Chrome must be closed when syncing (LevelDB locks)
 
 ## Installation
 
-No external dependencies required - uses only Python standard library.
+```bash
+npm install
+```
+
+Or link globally:
+
+```bash
+npm link
+```
 
 ## Usage
 
 ```bash
 # Sync userscripts to default location (~/Developer/tweeks-userscripts)
-python tweeks_sync.py
+node index.js
+# or if linked globally:
+tweeks-sync
 
 # Sync to custom directory
-python tweeks_sync.py -o /path/to/output
+tweeks-sync -o /path/to/output
+
+# Set destination directory for copies with 'tweeks.' prefix
+tweeks-sync -d /path/to/destination
 
 # List scripts without exporting
-python tweeks_sync.py --list
+tweeks-sync --list
 
 # Sync without manifest.json
-python tweeks_sync.py --no-manifest
+tweeks-sync --no-manifest
 ```
 
 ## Output Structure
