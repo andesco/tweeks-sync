@@ -564,11 +564,18 @@ async function listScripts() {
   }
 }
 
+function normalizePath(path) {
+  return path
+    .replace(/^~/, homedir())
+    .replace(/\\ /g, ' ')      // unescape spaces
+    .replace(/^["']|["']$/g, ''); // remove surrounding quotes
+}
+
 async function setDestination(path) {
   const config = loadConfig();
   
   if (path) {
-    const dest = path.replace(/^~/, homedir());
+    const dest = normalizePath(path);
     config.destination = dest;
     saveConfig(config);
     console.log(`Destination set to: ${dest}`);
@@ -580,7 +587,7 @@ async function setDestination(path) {
     const response = await prompt('Destination directory: ');
     
     if (response) {
-      const dest = response.replace(/^~/, homedir());
+      const dest = normalizePath(response);
       config.destination = dest;
       saveConfig(config);
       console.log(`Destination set to: ${dest}`);
@@ -605,14 +612,14 @@ async function main() {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '-o' || arg === '--output') {
-      outputDir = args[++i]?.replace(/^~/, homedir()) || outputDir;
+      outputDir = normalizePath(args[++i] || '') || outputDir;
     } else if (arg === '-d' || arg === '--dest') {
-      destFlag = args[++i]?.replace(/^~/, homedir()) || null;
+      destFlag = normalizePath(args[++i] || '') || null;
     } else if (arg === '--set-dest') {
       setDest = true;
       const nextArg = args[i + 1];
       if (nextArg && !nextArg.startsWith('-')) {
-        setDestPath = nextArg.replace(/^~/, homedir());
+        setDestPath = normalizePath(nextArg);
         i++;
       }
     } else if (arg === '--no-manifest') {
