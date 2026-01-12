@@ -1,72 +1,51 @@
 # Tweeks Sync
 
-Export userscripts from the [Tweeks by NextByte](https://chrome.google.com/webstore/detail/tweeks-by-nextbyte/fmkancpjcacjodknfjcpmgkccbhedkhc) Chrome extension to a git repository.
+Export userscripts from [Tweeks by NextByte](https://chrome.google.com/webstore/detail/tweeks-by-nextbyte/fmkancpjcacjodknfjcpmgkccbhedkhc) Chrome extension to a git repository and specified folder.
 
 ## Features
 
 - Scans all Chrome profiles for Tweeks installations
 - Exports userscripts as individual `.user.js` files
 - Slugified filenames from `@name` metadata
-- Optional `manifest.json` tracking with sync history
+- Optional `manifest.json` tracking with update history
 - Preserves deleted scripts in the output repo
+- Auto-commits changes with summary (e.g., `1 added; 0 removed; 0 updated`)
+- Copies scripts to a custom destination with `tweeks.` prefix
 
 ## Requirements
 
 - Node.js 18+
-- macOS (uses `strings` command for LevelDB parsing)
-- Chrome must be closed when syncing (LevelDB locks)
+- macOS
 
 ## Installation
 
 ```bash
-npm install
+git clone https://github.com/yourusername/tweeks-sync.git
+cd tweeks-sync
 ```
-
-Or link globally:
-
-```bash
-npm link
-```
+No dependencies required.
 
 ## Usage
 
-### npm scripts (recommended)
+### npm scripts
 
 ```bash
-# Sync userscripts
 npm start
 npm run sync
-
-# List found userscripts without syncing
-npm run list
-
-# Set destination directory (interactive prompt)
+npm run list # list userscripts only
 npm run set
-
-# Set destination directory to specific path
 npm run set -- ~/path/to/destination
 ```
 
 ### CLI flags
 
 ```bash
-# Sync userscripts to default location (~/Developer/tweeks-userscripts)
 node index.js
-
-# Sync to custom output directory
 node index.js -o /path/to/output
-
-# Set destination for copies with 'tweeks.' prefix (one-time)
 node index.js -d /path/to/destination
-
-# Set/update destination directory
-node index.js --set-dest ~/path/to/destination
-
-# List scripts without exporting
 node index.js --list
-
-# Sync without manifest.json
-node index.js --no-manifest
+node index.js --no-manifest # do not sync metadata
+node index.js --help
 ```
 
 ## Output Structure
@@ -76,20 +55,39 @@ tweeks-userscripts/
 ├── .git/
 ├── .gitignore
 ├── README.md
-├── manifest.json          # Optional sync metadata
-├── reddit-remove-sidebar-expand-feed.user.js
-└── other-script-name.user.js
+├── manifest.json # optional: syncs metadata
+└── script-name.user.js
+```
+
+## Destination Directory
+
+Optionally copy scripts to another folder with `tweeks.` prefix. For example, a synced iCloud folder for [`Userscripts`](https://github.com/quoid/userscripts)
+
+```bash
+npm run set -- ~/Library/Mobile\ Documents/com~apple~CloudDocs/Userscripts/
+```
+
+Scripts are copied as `tweeks.script-name.user.js` and only overwritten if content differs.
+
+## Configuration
+
+Config is stored at `~/.config/tweeks-sync/config.json`:
+
+```json
+{
+  "destination": "/path/to/copy/scripts"
+}
 ```
 
 ## manifest.json
 
-Tracks metadata for each script:
+Tracks metadata for each script (only updated when scripts change):
 
 ```json
 {
   "scripts": [
     {
-      "uuid": "08bc44f8-5f3d-47e3-8698-edb7b08ce1c9",
+      "uuid": "00000000-0000-0000-0000-000000000000",
       "name": "Reddit - Remove Sidebar & Expand Feed",
       "filename": "reddit-remove-sidebar-expand-feed.user.js",
       "metadata": {
@@ -101,7 +99,7 @@ Tracks metadata for each script:
       "synced_at": "2025-01-12T12:00:00"
     }
   ],
-  "last_sync": "2025-01-12T12:00:00"
+  "last_updated": "2025-01-12T12:00:00"
 }
 ```
 
