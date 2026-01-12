@@ -92,11 +92,6 @@ function isChromeRunning() {
   return result.status === 0;
 }
 
-function quitChrome() {
-  const result = spawnSync('osascript', ['-e', 'tell application "Google Chrome" to quit']);
-  return result.status === 0;
-}
-
 async function ensureChromeClosed() {
   if (!isChromeRunning()) {
     return true;
@@ -104,42 +99,16 @@ async function ensureChromeClosed() {
   
   console.log('⚠️  Google Chrome is running.');
   console.log('Chrome must be closed to read the userscript database (LevelDB lock).');
-  console.log();
+  console.log('Please close Chrome and press Enter to continue, or Ctrl+C to cancel.\n');
   
-  while (true) {
-    const response = await prompt('Quit Chrome now? [Y/n/manual]: ');
-    const lower = response.toLowerCase();
-    
-    if (lower === '' || lower === 'y' || lower === 'yes') {
-      console.log('Quitting Chrome...');
-      if (quitChrome()) {
-        for (let i = 0; i < 10; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          if (!isChromeRunning()) {
-            console.log('Chrome closed successfully.');
-            return true;
-          }
-        }
-        console.log('Chrome is still running. Please close it manually.');
-        return false;
-      } else {
-        console.log('Failed to quit Chrome. Please close it manually.');
-        return false;
-      }
-    } else if (lower === 'n' || lower === 'no') {
-      console.log('Cannot proceed while Chrome is running.');
-      return false;
-    } else if (lower === 'manual') {
-      console.log('Please close Chrome manually, then press Enter...');
-      await prompt('');
-      if (!isChromeRunning()) {
-        return true;
-      }
-      console.log('Chrome is still running.');
-    } else {
-      console.log("Please enter 'y' (quit), 'n' (cancel), or 'manual'.");
-    }
+  await prompt('Press Enter when Chrome is closed...');
+  
+  if (!isChromeRunning()) {
+    return true;
   }
+  
+  console.log('Chrome is still running. Cannot proceed.');
+  return false;
 }
 
 // --- Utilities ---
