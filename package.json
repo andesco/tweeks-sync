@@ -8,7 +8,10 @@
   },
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "sync": "node index.js",
+    "list": "node index.js --list",
+    "set": "node index.js --set-dest"
   },
   "keywords": ["userscripts", "tweeks", "chrome", "extension"],
   "license": "MIT",

@@ -564,6 +564,34 @@ async function listScripts() {
   }
 }
 
+async function setDestination(path) {
+  const config = loadConfig();
+  
+  if (path) {
+    const dest = path.replace(/^~/, homedir());
+    config.destination = dest;
+    saveConfig(config);
+    console.log(`Destination set to: ${dest}`);
+  } else {
+    console.log('\n📁 Set destination directory for userscript copies.');
+    console.log("   Scripts will be copied with 'tweeks.' prefix (e.g., tweeks.script-name.user.js)");
+    console.log('   Enter a path or press Enter to clear:\n');
+    
+    const response = await prompt('Destination directory: ');
+    
+    if (response) {
+      const dest = response.replace(/^~/, homedir());
+      config.destination = dest;
+      saveConfig(config);
+      console.log(`Destination set to: ${dest}`);
+    } else {
+      config.destination = null;
+      saveConfig(config);
+      console.log('Destination cleared.');
+    }
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   
@@ -571,6 +599,8 @@ async function main() {
   let destFlag = null;
   let noManifest = false;
   let listOnly = false;
+  let setDest = false;
+  let setDestPath = null;
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -578,6 +608,13 @@ async function main() {
       outputDir = args[++i]?.replace(/^~/, homedir()) || outputDir;
     } else if (arg === '-d' || arg === '--dest') {
       destFlag = args[++i]?.replace(/^~/, homedir()) || null;
+    } else if (arg === '--set-dest') {
+      setDest = true;
+      const nextArg = args[i + 1];
+      if (nextArg && !nextArg.startsWith('-')) {
+        setDestPath = nextArg.replace(/^~/, homedir());
+        i++;
+      }
     } else if (arg === '--no-manifest') {
       noManifest = true;
     } else if (arg === '--list') {
@@ -588,11 +625,23 @@ async function main() {
 Options:
   -o, --output <dir>   Output directory for userscripts (default: ~/Developer/tweeks-userscripts)
   -d, --dest <dir>     Destination directory to copy scripts with 'tweeks.' prefix
+  --set-dest [dir]     Set/update destination directory (prompts if no path given)
   --no-manifest        Don't create/update manifest.json
   --list               List found userscripts without exporting
-  -h, --help           Show this help message`);
+  -h, --help           Show this help message
+
+npm scripts:
+  npm start / npm run sync   Sync userscripts
+  npm run list               List found userscripts
+  npm run set                Set destination directory (interactive)
+  npm run set -- <path>      Set destination directory to <path>`);
       return;
     }
+  }
+  
+  if (setDest) {
+    await setDestination(setDestPath);
+    return;
   }
   
   if (listOnly) {

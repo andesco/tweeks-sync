@@ -30,23 +30,43 @@ npm link
 
 ## Usage
 
+### npm scripts (recommended)
+
+```bash
+# Sync userscripts
+npm start
+npm run sync
+
+# List found userscripts without syncing
+npm run list
+
+# Set destination directory (interactive prompt)
+npm run set
+
+# Set destination directory to specific path
+npm run set -- ~/path/to/destination
+```
+
+### CLI flags
+
 ```bash
 # Sync userscripts to default location (~/Developer/tweeks-userscripts)
 node index.js
-# or if linked globally:
-tweeks-sync
 
-# Sync to custom directory
-tweeks-sync -o /path/to/output
+# Sync to custom output directory
+node index.js -o /path/to/output
 
-# Set destination directory for copies with 'tweeks.' prefix
-tweeks-sync -d /path/to/destination
+# Set destination for copies with 'tweeks.' prefix (one-time)
+node index.js -d /path/to/destination
+
+# Set/update destination directory
+node index.js --set-dest ~/path/to/destination
 
 # List scripts without exporting
-tweeks-sync --list
+node index.js --list
 
 # Sync without manifest.json
-tweeks-sync --no-manifest
+node index.js --no-manifest
 ```
 
 ## Output Structure
