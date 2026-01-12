@@ -10,12 +10,16 @@
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, statSync } from 'fs';
 import { homedir } from 'os';
-import { join, basename } from 'path';
+import { join, basename, dirname } from 'path';
 import { createInterface } from 'readline';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const TWEEKS_EXTENSION_ID = 'fmkancpjcacjodknfjcpmgkccbhedkhc';
 const CHROME_SUPPORT_DIR = join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
-const DEFAULT_OUTPUT_DIR = join(homedir(), 'Developer', 'tweeks-userscripts');
+const DEFAULT_OUTPUT_DIR = join(dirname(__dirname), 'tweeks-userscripts');
 const CONFIG_FILE = join(homedir(), '.config', 'tweeks-sync', 'config.json');
 
 // --- Config ---
