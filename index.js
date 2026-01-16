@@ -200,78 +200,92 @@ function extractUserscripts(dbPath) {
   
   function parseScriptsFromText(text) {
     const found = {};
-    let idx = 0;
+    const keyRegex = /"([0-9a-fA-F-]{36})":"/g;
+    let match;
     
-    while (true) {
-      const start = text.indexOf('{"', idx);
-      if (start === -1) break;
+    while ((match = keyRegex.exec(text))) {
+      const uuid = match[1];
+      let i = match.index + match[0].length;
+      let value = '';
+      let escaped = false;
       
-      if (!text.slice(start, start + 5000).includes('==UserScript==')) {
-        idx = start + 1;
-        continue;
-      }
-      
-      let braceCount = 0;
-      let end = start;
-      let inString = false;
-      let escapeNext = false;
-      
-      for (let i = start; i < text.length; i++) {
+      for (; i < text.length; i++) {
         const c = text[i];
-        
-        if (escapeNext) {
-          escapeNext = false;
+        if (escaped) {
+          value += c;
+          escaped = false;
           continue;
         }
-        
         if (c === '\\') {
-          escapeNext = true;
+          value += c;
+          escaped = true;
           continue;
         }
-        
-        if (c === '"' && !escapeNext) {
-          inString = !inString;
-          continue;
+        if (c === '"') {
+          break;
         }
-        
-        if (inString) continue;
-        
-        if (c === '{') braceCount++;
-        else if (c === '}') {
-          braceCount--;
-          if (braceCount === 0) {
-            end = i + 1;
-            break;
+        value += c;
+      }
+      
+      if (value.includes('==UserScript==')) {
+        let decoded = '';
+        for (let j = 0; j < value.length; j++) {
+          const ch = value[j];
+          if (ch !== '\\') {
+            decoded += ch;
+            continue;
           }
+          const next = value[++j];
+          if (next === undefined) break;
+          if (next === 'n') decoded += '\n';
+          else if (next === 'r') decoded += '\r';
+          else if (next === 't') decoded += '\t';
+          else if (next === 'b') decoded += '\b';
+          else if (next === 'f') decoded += '\f';
+          else if (next === '"') decoded += '"';
+          else if (next === '\\') decoded += '\\';
+          else if (next === 'u') {
+            const hex = value.slice(j + 1, j + 5);
+            if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+              decoded += String.fromCharCode(parseInt(hex, 16));
+              j += 4;
+            } else {
+              decoded += '\\u';
+            }
+          } else {
+            decoded += `\\${next}`;
+          }
+        }
+        
+        if (decoded.includes('==UserScript==')) {
+          found[uuid] = decoded;
         }
       }
       
-      if (end > start) {
-        const jsonStr = text.slice(start, end);
-        try {
-          const data = JSON.parse(jsonStr);
-          if (typeof data === 'object' && data !== null) {
-            for (const [uuid, script] of Object.entries(data)) {
-              if (typeof script === 'string' && script.includes('==UserScript==')) {
-                found[uuid] = script;
-              }
-            }
-          }
-        } catch {}
-        idx = end;
-      } else {
-        idx = start + 1;
-      }
+      keyRegex.lastIndex = i + 1;
     }
     
     return found;
+  }
+  
+  function readLevelDbText(filePath) {
+    try {
+      const result = spawnSync('strings', [filePath], { encoding: 'utf-8' });
+      if (result.stdout) return result.stdout;
+    } catch {}
+    
+    try {
+      return readFileSync(filePath, 'utf-8');
+    } catch {
+      return '';
+    }
   }
   
   // Read .log files
   for (const file of readdirSync(dbPath)) {
     if (!file.endsWith('.log')) continue;
     try {
-      const content = readFileSync(join(dbPath, file), 'utf-8');
+      const content = readLevelDbText(join(dbPath, file));
       Object.assign(scripts, parseScriptsFromText(content));
     } catch (e) {
       console.log(`  Warning: Could not read ${file}: ${e.message}`);
@@ -283,10 +297,8 @@ function extractUserscripts(dbPath) {
     for (const file of readdirSync(dbPath)) {
       if (!file.endsWith('.ldb')) continue;
       try {
-        const result = spawnSync('strings', [join(dbPath, file)], { encoding: 'utf-8' });
-        if (result.stdout) {
-          Object.assign(scripts, parseScriptsFromText(result.stdout));
-        }
+        const content = readLevelDbText(join(dbPath, file));
+        Object.assign(scripts, parseScriptsFromText(content));
       } catch (e) {
         console.log(`  Warning: Could not read ${file}: ${e.message}`);
       }
