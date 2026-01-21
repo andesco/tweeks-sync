@@ -22,8 +22,9 @@ Export userscripts from [Tweeks by NextByte](https://chrome.google.com/webstore/
 ```bash
 git clone https://github.com/yourusername/tweeks-sync.git
 cd tweeks-sync
+npm install
 ```
-No dependencies required.
+Installs `level` package to read LevelDB  database used by Chrome for extension settings.
 
 ## Usage
 
@@ -45,8 +46,12 @@ node index.js -o /path/to/output
 node index.js -d /path/to/destination
 node index.js --list
 node index.js --no-manifest # do not sync metadata
+node index.js --debug # extra diagnostics
 node index.js --help
 ```
+
+> [!NOTE]
+> Chrome may keep the Tweeks database locked. The sync attempts a temporary copy first; if it still cannot read data it will prompt you to close Chrome.
 
 ## Output Structure
 
@@ -59,15 +64,20 @@ tweeks-userscripts/
 └── script-name.user.js
 ```
 
+If multiple scripts share the same `@name`, filenames are disambiguated with a UUID suffix.
+
 ## Destination Directory
 
-Optionally copy scripts to another folder with `tweeks.` prefix. For example, a synced iCloud folder for [`Userscripts`](https://github.com/quoid/userscripts)
+Optionally copy scripts to another folder. For example, update a synced iCloud folder:
 
 ```bash
 npm run set -- ~/Library/Mobile\ Documents/com~apple~CloudDocs/Userscripts/
 ```
 
 Scripts are copied as `tweeks.script-name.user.js` and only overwritten if content differs.
+
+> [!TIP]
+> [`Userscripts`](https://github.com/quoid/userscripts) is a highly recommended Safari extention that can use an iCloud folder to keep userscripts in sync on multiple devices.
 
 ## Configuration
 

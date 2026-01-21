@@ -8,11 +8,13 @@
  */
 
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, statSync } from 'fs';
-import { homedir } from 'os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync, statSync, renameSync, unlinkSync, mkdtempSync, rmSync } from 'fs';
+import { homedir, tmpdir } from 'os';
 import { join, basename, dirname } from 'path';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
+import { Level } from 'level';
+import { createHash } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -161,7 +163,13 @@ function findTweeksDatabases() {
   
   for (const entry of readdirSync(CHROME_SUPPORT_DIR)) {
     const profileDir = join(CHROME_SUPPORT_DIR, entry);
-    if (!statSync(profileDir).isDirectory()) continue;
+    let stats;
+    try {
+      stats = statSync(profileDir);
+    } catch {
+      continue;
+    }
+    if (!stats.isDirectory()) continue;
     if (!entry.startsWith('Profile') && entry !== 'Default') continue;
     
     const extensionSettings = join(profileDir, 'Local Extension Settings', TWEEKS_EXTENSION_ID);
@@ -174,9 +182,14 @@ function findTweeksDatabases() {
   return databases;
 }
 
-function verifyTweeksExtension(profileDir) {
+function verifyTweeksExtension(profileDir, debug = false) {
   const extensionsDir = join(profileDir, 'Extensions', TWEEKS_EXTENSION_ID);
-  if (!existsSync(extensionsDir)) return false;
+  if (!existsSync(extensionsDir)) {
+    if (debug) {
+      console.log(`  Debug: Extensions dir not found:\n  ${extensionsDir}`);
+    }
+    return false;
+  }
   
   for (const versionDir of readdirSync(extensionsDir)) {
     const versionPath = join(extensionsDir, versionDir);
@@ -186,17 +199,72 @@ function verifyTweeksExtension(profileDir) {
     if (existsSync(manifestPath)) {
       try {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+        if (debug) {
+          console.log(`  Debug: manifest path:\n  ${manifestPath}`);
+          console.log(`  Debug: manifest name: ${manifest?.name || '(missing)'}`);
+        }
         if (manifest.name && manifest.name.includes('Tweeks')) {
           return true;
         }
       } catch {}
+      if (debug) {
+        console.log(`  Debug: manifest read/parse failed:\n  ${manifestPath}`);
+      }
     }
   }
   return false;
 }
 
-function extractUserscripts(dbPath) {
+async function extractUserscripts(dbPath, debug = false) {
   const scripts = {};
+  let needsClose = false;
+  
+  async function parseScriptsFromLevelDb(pathToDb) {
+    const found = {};
+    const db = new Level(pathToDb, {
+      createIfMissing: false,
+      keyEncoding: 'utf8',
+      valueEncoding: 'utf8'
+    });
+    
+    try {
+      await db.open();
+      const iterator = db.iterator();
+      for await (const [key, value] of iterator) {
+        if (typeof value !== 'string') continue;
+        if (!value.includes('==UserScript==')) continue;
+        
+        if (value.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(value);
+            for (const [uuid, script] of Object.entries(parsed)) {
+              if (typeof script === 'string' && script.includes('==UserScript==')) {
+                found[uuid] = script;
+              }
+            }
+            continue;
+          } catch {}
+        }
+        
+        Object.assign(found, parseScriptsFromText(value));
+      }
+      await iterator.close();
+    } catch (error) {
+      const message = error?.message || String(error);
+      const code = error?.code ? ` (${error.code})` : '';
+      if (debug) {
+        console.log(`  Debug: LevelDB read failed in:\n  ${pathToDb}\n  ${message}${code}`);
+      }
+      const lower = message.toLowerCase();
+      if (lower.includes('lock') || error?.code === 'LEVEL_LOCKED') {
+        needsClose = true;
+      }
+    } finally {
+      await db.close();
+    }
+    
+    return found;
+  }
   
   function parseScriptsFromText(text) {
     const found = {};
@@ -272,6 +340,9 @@ function extractUserscripts(dbPath) {
     try {
       const result = spawnSync('strings', [filePath], { encoding: 'utf-8' });
       if (result.stdout) return result.stdout;
+      if (debug && result.error) {
+        console.log(`  Debug: strings failed for:\n  ${filePath}\n  ${result.error.message}`);
+      }
     } catch {}
     
     try {
@@ -281,8 +352,60 @@ function extractUserscripts(dbPath) {
     }
   }
   
+  const entries = readdirSync(dbPath);
+  const logFiles = entries.filter(file => file.endsWith('.log'));
+  const ldbFiles = entries.filter(file => file.endsWith('.ldb'));
+
+  if (debug) {
+    console.log(`  Debug: ${logFiles.length} .log file(s), ${ldbFiles.length} .ldb file(s) in:\n  ${dbPath}`);
+  }
+
+  const levelScripts = await parseScriptsFromLevelDb(dbPath);
+  Object.assign(scripts, levelScripts);
+  
+  if (debug) {
+    console.log(`  Debug: extracted ${Object.keys(scripts).length} script blob(s) via LevelDB from:\n  ${dbPath}`);
+  }
+  
+  if (Object.keys(scripts).length > 0) {
+    return { scripts, needsClose };
+  }
+  
+  let tempDir = null;
+  try {
+    tempDir = mkdtempSync(join(tmpdir(), 'tweeks-sync-'));
+    for (const entry of entries) {
+      const srcPath = join(dbPath, entry);
+      const destPath = join(tempDir, entry);
+      if (statSync(srcPath).isFile()) {
+        copyFileSync(srcPath, destPath);
+      }
+    }
+    
+    const tempScripts = await parseScriptsFromLevelDb(tempDir);
+    Object.assign(scripts, tempScripts);
+    
+    if (debug) {
+      console.log(`  Debug: extracted ${Object.keys(scripts).length} script blob(s) via LevelDB copy from:\n  ${tempDir}`);
+    }
+    
+    if (Object.keys(scripts).length > 0) {
+      return { scripts, needsClose };
+    }
+  } catch (error) {
+    if (debug) {
+      console.log(`  Debug: temp LevelDB copy failed:\n  ${error.message}`);
+    }
+  } finally {
+    if (tempDir) {
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+  
   // Read .log files
-  for (const file of readdirSync(dbPath)) {
+  for (const file of logFiles) {
     if (!file.endsWith('.log')) continue;
     try {
       const content = readLevelDbText(join(dbPath, file));
@@ -294,7 +417,7 @@ function extractUserscripts(dbPath) {
   
   // Fallback to .ldb files using strings
   if (Object.keys(scripts).length === 0) {
-    for (const file of readdirSync(dbPath)) {
+    for (const file of ldbFiles) {
       if (!file.endsWith('.ldb')) continue;
       try {
         const content = readLevelDbText(join(dbPath, file));
@@ -304,13 +427,17 @@ function extractUserscripts(dbPath) {
       }
     }
   }
-  
-  return scripts;
+
+  if (debug) {
+    console.log(`  Debug: extracted ${Object.keys(scripts).length} script blob(s) from:\n  ${dbPath}`);
+  }
+
+  return { scripts, needsClose };
 }
 
 // --- Export Operations ---
 
-function exportUserscripts(scripts, outputDir, includeManifest = true) {
+function exportUserscripts(scripts, outputDir, includeManifest = true, debug = false) {
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
@@ -318,13 +445,50 @@ function exportUserscripts(scripts, outputDir, includeManifest = true) {
   const exported = [];
   let added = 0;
   let updated = 0;
+  let renamed = 0;
+  
+  const manifestPath = join(outputDir, 'manifest.json');
+  let existingManifest = null;
+  if (existsSync(manifestPath)) {
+    try {
+      existingManifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+    } catch {}
+  }
+  const uuidToFilename = new Map((existingManifest?.scripts || []).map(script => [script.uuid, script.filename]));
+  const usedFilenames = new Map();
+  for (const [uuid, filename] of uuidToFilename.entries()) {
+    if (!usedFilenames.has(filename)) {
+      usedFilenames.set(filename, uuid);
+    }
+  }
+  
+  const changedUuids = new Set();
   
   for (const [uuid, script] of Object.entries(scripts)) {
     const metadata = parseUserscriptMetadata(script);
     const name = metadata.name || uuid;
     const slug = slugify(name);
-    const filename = `${slug}.user.js`;
+    const baseFilename = `${slug}.user.js`;
+    let filename = uuidToFilename.get(uuid) || baseFilename;
+    if (usedFilenames.has(filename) && usedFilenames.get(filename) !== uuid) {
+      filename = `${slug}-${uuid.slice(0, 8)}.user.js`;
+    }
+    usedFilenames.set(filename, uuid);
     const filepath = join(outputDir, filename);
+    
+    const previousFilename = uuidToFilename.get(uuid);
+    if (previousFilename && previousFilename !== filename) {
+      const previousPath = join(outputDir, previousFilename);
+      if (existsSync(previousPath) && previousPath !== filepath) {
+        if (existsSync(filepath)) {
+          unlinkSync(previousPath);
+          renamed++;
+        } else {
+          renameSync(previousPath, filepath);
+          renamed++;
+        }
+      }
+    }
     
     const isNew = !existsSync(filepath);
     let contentChanged = false;
@@ -332,6 +496,13 @@ function exportUserscripts(scripts, outputDir, includeManifest = true) {
     if (!isNew) {
       const existingContent = readFileSync(filepath, 'utf-8');
       contentChanged = existingContent !== script;
+      if (debug && contentChanged) {
+        const existingHash = createHash('sha256').update(existingContent).digest('hex');
+        const scriptHash = createHash('sha256').update(script).digest('hex');
+        console.log(`  Debug: content hash mismatch for ${filename}`);
+        console.log(`  Debug: existing sha256 ${existingHash}`);
+        console.log(`  Debug: incoming sha256 ${scriptHash}`);
+      }
     }
     
     if (isNew || contentChanged) {
@@ -339,13 +510,19 @@ function exportUserscripts(scripts, outputDir, includeManifest = true) {
       
       if (isNew) {
         added++;
+        changedUuids.add(uuid);
         console.log(`  Added: ${filename}`);
       } else {
         updated++;
+        changedUuids.add(uuid);
         console.log(`  Updated: ${filename}`);
       }
     } else {
       console.log(`  Unchanged: ${filename}`);
+    }
+    
+    if (previousFilename && previousFilename !== filename) {
+      changedUuids.add(uuid);
     }
     
     exported.push({
@@ -358,23 +535,22 @@ function exportUserscripts(scripts, outputDir, includeManifest = true) {
   }
   
   const removed = 0; // We keep deleted scripts
-  const hasChanges = added > 0 || updated > 0 || removed > 0;
+  const hasChanges = added > 0 || updated > 0 || removed > 0 || renamed > 0;
   
   if (includeManifest && hasChanges) {
-    const manifestPath = join(outputDir, 'manifest.json');
     let manifest = { scripts: [], last_updated: new Date().toISOString() };
     
-    if (existsSync(manifestPath)) {
-      try {
-        manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-      } catch {}
+    if (existingManifest) {
+      manifest = existingManifest;
     }
     
-    const existingUuids = new Set(manifest.scripts?.map(s => s.uuid) || []);
+    const existingScripts = new Map((manifest.scripts || []).map(s => [s.uuid, s]));
     
     for (const exp of exported) {
-      if (existingUuids.has(exp.uuid)) {
-        manifest.scripts = manifest.scripts.map(s => s.uuid === exp.uuid ? exp : s);
+      if (existingScripts.has(exp.uuid)) {
+        if (changedUuids.has(exp.uuid)) {
+          manifest.scripts = manifest.scripts.map(s => s.uuid === exp.uuid ? exp : s);
+        }
       } else {
         manifest.scripts.push(exp);
       }
@@ -385,7 +561,7 @@ function exportUserscripts(scripts, outputDir, includeManifest = true) {
     console.log('  Updated manifest.json');
   }
   
-  return { exported, added, updated, removed };
+  return { exported, added, updated, removed, renamed };
 }
 
 // --- Git Operations ---
@@ -421,15 +597,15 @@ function initGitRepo(outputDir) {
   return isNew;
 }
 
-function gitCommit(outputDir, added, updated, removed, isFirstSync = false) {
-  if (!isFirstSync && added === 0 && updated === 0 && removed === 0) {
+function gitCommit(outputDir, added, updated, removed, renamed, isFirstSync = false) {
+  if (!isFirstSync && added === 0 && updated === 0 && removed === 0 && renamed === 0) {
     console.log('No script changes to commit.');
     return;
   }
   
   spawnSync('git', ['add', '-A'], { cwd: outputDir });
   
-  const commitMsg = `${added} added; ${removed} removed; ${updated} updated`;
+  const commitMsg = `${added} added; ${removed} removed; ${updated} updated; ${renamed} renamed`;
   const result = spawnSync('git', ['commit', '-m', commitMsg], { cwd: outputDir, encoding: 'utf-8' });
   
   if (result.status === 0) {
@@ -483,11 +659,7 @@ function copyToDestination(outputDir, destDir) {
 
 // --- Main ---
 
-async function sync(outputDir, includeManifest, destDir) {
-  if (!await ensureChromeClosed()) {
-    process.exit(1);
-  }
-  
+async function sync(outputDir, includeManifest, destDir, debug = false) {
   console.log('Scanning for Tweeks extensions...');
   const databases = findTweeksDatabases();
   
@@ -497,19 +669,33 @@ async function sync(outputDir, includeManifest, destDir) {
   }
   
   const allScripts = {};
+  let anyNeedsClose = false;
   
   for (const dbPath of databases) {
     const profileDir = join(dbPath, '..', '..');
     const profileName = basename(join(dbPath, '..', '..'));
     
-    if (!verifyTweeksExtension(profileDir)) {
-      console.log(`  Warning: Could not verify Tweeks extension in ${profileName}`);
-      continue;
+    if (!verifyTweeksExtension(profileDir, debug)) {
+      console.log(`  Warning: Could not verify Tweeks extension in ${profileName}; attempting export anyway.`);
     }
     
     console.log(`Extracting scripts from ${profileName}...`);
-    const scripts = extractUserscripts(dbPath);
+    const { scripts, needsClose } = await extractUserscripts(dbPath, debug);
+    if (needsClose) {
+      anyNeedsClose = true;
+    }
     Object.assign(allScripts, scripts);
+  }
+  
+  if (Object.keys(allScripts).length === 0 && anyNeedsClose) {
+    if (!await ensureChromeClosed()) {
+      process.exit(1);
+    }
+    
+    for (const dbPath of databases) {
+      const { scripts } = await extractUserscripts(dbPath, debug);
+      Object.assign(allScripts, scripts);
+    }
   }
   
   if (Object.keys(allScripts).length === 0) {
@@ -521,9 +707,9 @@ async function sync(outputDir, includeManifest, destDir) {
   console.log(`Exporting to ${outputDir}...`);
   
   const isFirstSync = initGitRepo(outputDir);
-  const { exported, added, updated, removed } = exportUserscripts(allScripts, outputDir, includeManifest);
+  const { exported, added, updated, removed, renamed } = exportUserscripts(allScripts, outputDir, includeManifest, debug);
   
-  gitCommit(outputDir, added, updated, removed, isFirstSync);
+  gitCommit(outputDir, added, updated, removed, renamed, isFirstSync);
   
   if (destDir) {
     copyToDestination(outputDir, destDir);
@@ -532,19 +718,44 @@ async function sync(outputDir, includeManifest, destDir) {
   console.log(`\nSync complete. ${exported.length} script(s) processed.`);
 }
 
-async function listScripts() {
+async function listScripts(debug = false) {
   console.log('Scanning for Tweeks extensions...');
   const databases = findTweeksDatabases();
+  let anyNeedsClose = false;
+  let totalScripts = 0;
   
   for (const dbPath of databases) {
     const profileName = basename(join(dbPath, '..', '..'));
     console.log(`\n${profileName}:`);
     
-    const scripts = extractUserscripts(dbPath);
+    const { scripts, needsClose } = await extractUserscripts(dbPath, debug);
+    if (needsClose) {
+      anyNeedsClose = true;
+    }
     for (const [uuid, script] of Object.entries(scripts)) {
       const metadata = parseUserscriptMetadata(script);
       const name = metadata.name || uuid;
       console.log(`  - ${name}`);
+      totalScripts++;
+    }
+  }
+  
+  if (anyNeedsClose && totalScripts === 0) {
+    console.log('\nSome databases may be locked by Chrome.');
+    if (!await ensureChromeClosed()) {
+      process.exit(1);
+    }
+    
+    for (const dbPath of databases) {
+      const profileName = basename(join(dbPath, '..', '..'));
+      console.log(`\n${profileName}:`);
+      
+      const { scripts } = await extractUserscripts(dbPath, debug);
+      for (const [uuid, script] of Object.entries(scripts)) {
+        const metadata = parseUserscriptMetadata(script);
+        const name = metadata.name || uuid;
+        console.log(`  - ${name}`);
+      }
     }
   }
 }
@@ -593,6 +804,7 @@ async function main() {
   let listOnly = false;
   let setDest = false;
   let setDestPath = null;
+  let debug = false;
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -609,6 +821,8 @@ async function main() {
       }
     } else if (arg === '--no-manifest') {
       noManifest = true;
+    } else if (arg === '--debug') {
+      debug = true;
     } else if (arg === '--list') {
       listOnly = true;
     } else if (arg === '-h' || arg === '--help') {
@@ -619,6 +833,7 @@ Options:
   -d, --dest <dir>     Destination directory to copy scripts with 'tweeks.' prefix
   --set-dest [dir]     Set/update destination directory (prompts if no path given)
   --no-manifest        Don't create/update manifest.json
+  --debug              Print extra diagnostics when scanning profiles
   --list               List found userscripts without exporting
   -h, --help           Show this help message
 
@@ -637,12 +852,12 @@ npm scripts:
   }
   
   if (listOnly) {
-    await listScripts();
+    await listScripts(debug);
     return;
   }
   
   const destDir = await getDestinationDir(destFlag);
-  await sync(outputDir, !noManifest, destDir);
+  await sync(outputDir, !noManifest, destDir, debug);
 }
 
 main().catch(console.error);

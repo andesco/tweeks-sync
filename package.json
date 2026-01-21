@@ -10,10 +10,17 @@
   "scripts": {
     "start": "node index.js",
     "sync": "node index.js",
-    "list": "node index.js --list",
+    "list": "node index.js --list --debug",
     "set": "node index.js --set-dest"
   },
-  "keywords": ["userscripts", "tweeks", "chrome", "extension"],
+  "keywords": [
+    "userscripts",
+    "tweeks",
+    "chrome",
+    "extension"
+  ],
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "level": "^10.0.0"
+  }
 }
